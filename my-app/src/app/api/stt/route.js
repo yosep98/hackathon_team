@@ -342,6 +342,7 @@ const personalityPrompts = {
 
 export async function POST(req) {
   try {
+    console.time("🔁 전체 처리 시간");
     // (A) FormData에서 파일 가져오기
     const formData = await req.formData();
     const file = formData.get("audioFile");
@@ -394,14 +395,14 @@ export async function POST(req) {
     } else {
       fs.renameSync(tempPath, trimmedPath); // 5초 이하라면 파일 이름만 변경
     }
-
+    console.time("🕒 Whisper");
     // (F) Whisper API 호출 (음성 → 텍스트 변환)
     const transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(trimmedPath), 
       model: "whisper-1",
       language: "ko",
     });
-
+    console.timeEnd("🕒 Whisper");
      console.log("📝 Whisper 변환 결과:", transcription.text);
     const userText = transcription.text;
 
@@ -409,7 +410,7 @@ export async function POST(req) {
     if (fs.existsSync(trimmedPath)) {
       fs.unlinkSync(trimmedPath);
     }
-
+    console.time("🕒 GPT");
     // (H) GPT로 응답 생성
     const systemPrompt = personalityPrompts[category][difficulty] || personalityPrompts[category]["middle"];
 
@@ -426,13 +427,14 @@ export async function POST(req) {
         ...messages,
       ],
     });
-
+    console.timeEnd("🕒 GPT");
     const gptReply = gptResponse.choices[0].message.content;
     console.log("🤖 GPT 응답:", gptReply);
 
     // (I) 응답을 대화 기록에 추가
     messages.push({ role: "system", content: gptReply });
 
+    console.time("🕒 TTS");
     // (J) ElevenLabs TTS API 호출
     const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
     const ttsHeaders = {
@@ -449,6 +451,7 @@ export async function POST(req) {
         style: 1.0,
       },
     };
+    console.timeEnd("🕒 TTS");
 
     const ttsResponse = await fetch(ttsUrl, {
       method: "POST",
@@ -463,6 +466,7 @@ export async function POST(req) {
     const audioBuffer = await ttsResponse.arrayBuffer();
     const base64Audio = Buffer.from(audioBuffer).toString("base64");
 
+    console.timeEnd("🔁 전체 처리 시간");
     console.log("✅ TTS 변환 완료");
 
     // (K) 최종 응답 반환
