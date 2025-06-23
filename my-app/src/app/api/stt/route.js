@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 import { execSync } from "child_process"; // FFmpeg 실행을 위한 모듈 추가
+import axios from "axios";
+import FormData from 'form-data';
 import speech from '@google-cloud/speech';
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -11,6 +13,7 @@ const openai = new OpenAI({
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"; // ElevenLabs에서 사용할 음성 ID
 const MAX_DURATION = 5; // 최대 허용 녹음 길이 (초)
+console.log("🔑 OPENAI_API_KEY:", process.env.OPENAI_API_KEY);
 
 const commonPrompt = {
   "restaurant":`너는 중국집 '용궁반점'의 사장이다.  
@@ -339,17 +342,20 @@ const personalityPrompts = {
     은행원: "하 ... 홈페이지 확인하세요."`
   }
 };
-
+console.log("✅ env 키 확인", {
+    OPENAI: process.env.OPENAI_API_KEY,
+    ELEVEN: process.env.ELEVENLABS_API_KEY,
+});
 export async function POST(req) {
   try {
     console.time("🔁 전체 처리 시간");
     // (A) FormData에서 파일 가져오기
-    const formData = await req.formData();
-    const file = formData.get("audioFile");
-    const messagesRaw = formData.get("messages");
+    const clientFormData = await req.formData();
+    const file = clientFormData.get("audioFile");
+    const messagesRaw = clientFormData.get("messages");
     const messages = messagesRaw ? JSON.parse(messagesRaw) : [];
-    const category = formData.get("category") || "restaurant"; // 기본값: 중국집
-    const difficulty = formData.get("difficulty") || "middle"; // 기본값: 중간
+    const category = clientFormData.get("category") || "restaurant"; // 기본값: 중국집
+    const difficulty = clientFormData.get("difficulty") || "middle"; // 기본값: 중간
     
 
     if (!file) {
@@ -370,20 +376,22 @@ export async function POST(req) {
     // (D) ffmpeg로 5초만 wav로 변환 (길이 측정 생략)
     execSync(`ffmpeg -i ${webmPath} -t 5 -ar 16000 -ac 1 -f wav -c:a pcm_s16le ${wavPath} -y`);
 
-    console.time("🕒 Google STT");
-    // (E) Google STT
-    const audioBytes = fs.readFileSync(wavPath).toString('base64');
-    const audio = { content: audioBytes };
-    const config = {
-      encoding: 'LINEAR16',
-      sampleRateHertz: 16000,
-      languageCode: 'ko-KR',
-    };
-    const request = { audio, config };
-    const speechClient = new speech.SpeechClient();
-    const [response] = await speechClient.recognize(request);
-    const userText = response.results.map(result => result.alternatives[0].transcript).join('\n');
-    console.timeEnd("🕒 Google STT");
+      console.time("🕒 Whisper STT");
+
+// Colab(ngrok) 주소로 파일 전송
+      const whisperFormData = new FormData();
+      whisperFormData.append("file", fs.createReadStream(wavPath));
+
+      const response = await axios.post(
+          process.env.WHISPER_URL,
+          whisperFormData,
+          { headers: whisperFormData.getHeaders(),
+          }
+      );
+
+      const userText = response.data.text;
+
+      console.timeEnd("🕒 Whisper STT");
 
     // (F) 임시 파일 삭제
     if (fs.existsSync(webmPath)) fs.unlinkSync(webmPath);
